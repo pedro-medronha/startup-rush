@@ -31,7 +31,7 @@ class Rush:
         self.startups.append(new_startup)
         return new_startup # so pra verificar
         
-    def start_tournament(self) -> List[Tuple[str, str]]:    
+    def start_tournament(self): #-> List[Tuple[str, str]]:    
         #sorteia os pares para a primeira rodada do torneio
         if len(self.startups) < 4 or len(self.startups) % 2 != 0:
             raise ValueError("The number of startups must be even (from 4 to 8)!.")
@@ -78,34 +78,86 @@ class Rush:
         self.start_tournament() # começa outro round
         return True
     
-    def get_available_events(self, battle_index: int) -> List[str]:
+    def get_available_events(self, battle_index: int, startup_index: int) -> List[str]:
         #retorna os eventos disponíveis para a rodada
         battle = self.pending_battles[battle_index]
+        applied_events = (battle.applied_events_startup1 if startup_index == 0 else battle.applied_events_startup2)
         return [ev for ev in self.events
-                if ev not in battle.applied_events]
+                if ev not in applied_events]
         
     def apply_event_to_startup(self, battle_index: int, event_name: str, startup_index: int):
         #aplica um evento especifico a uma startup
-        battle.self.pending_battles[battle_index]
-        startup = battle.startup1 if startup_index == 0 else battle.startup2
+        battle = self.pending_battles[battle_index]
         
-        if event_name in battle.applied_events:
-            raise ValueError("Event already applied in this turn!.")
-        
-        startup.points += self.events[event_name]
-        battle.applied_events.append(event_name)
+        if startup_index == 0: #startup 1
+            if event_name in battle.applied_events_startup1:
+                raise ValueError(f"Event {event_name} already applied to {battle.startup1.name}.")
+            
+            battle.startup1.points += self.events[event_name]
+            battle.applied_events_startup1.append(event_name)
+            
+        else:
+            if event_name in battle.applied_events_startup2:
+                raise ValueError(f"Event {event_name} already applied to {battle.startup2.name}.")
+            
+            battle.startup2.points += self.events[event_name]
+            battle.applied_events_startup2.append(event_name)
         
     def shark_fight(self, battle_index: int) -> Startup:
         #finalização da batalha
+        if not 0 <= battle_index < len(self.pending_battles):
+            raise ValueError("Invalid battle index!.")
+        
         battle = self.pending_battles[battle_index]
         
+        #verificqção de segurança
+        if not hasattr(battle, "startup1") or not hasattr(battle, "startup2"):
+            raise AttributeError("Battle doesn't have startups defined correctly.")
+        
+        #shark fight, para caso de empate
         if battle.startup1.points == battle.startup2.points:
             winner = random.choice([battle.startup1, battle.startup2])
             winner.points += 2 #bônus de 2 pontos do shark fight em caso de empate
+        else:
+            winner = max(battle.startup1, battle.startup2, key=lambda s: s.points)
             
-        winner = max(battle.startup1, battle.startup2, key=lambda s: s.points)
         winner.points += 30 #bônus de 30 pontos por vitória
+        battle.winner = winner #atribui o vencedor a batalha
+        battle.ended = True
         
         self.ended_battles.append(battle)
         self.pending_battles.pop(battle_index)
         return winner #retorna o vencedor desta batalha
+    
+    def shark_fight_ui(self, battle_index: int) -> dict:
+        #só retorna informações para a interface
+        winner = self.shark_fight(battle_index)
+        battle = self.ended_battles[-1] # a última batalha finalizada
+        
+        return{
+            "winner": winner.name,
+            "winner_points": winner.points,
+            "shark_fight_was_applied": battle.startup1.points == battle.startup2.points,
+            "round": len(self.pending_battles) == 0
+        }
+        
+    def get_battle_information(self, battle_index: int) -> dict:
+        #retorna informações detalhadas da batalha
+        if not (0 <= battle_index < len(self.pending_battles)):
+            raise ValueError("Invalid battle index!.")
+        
+        battle = self.pending_battles[battle_index]
+        return {
+            "startup1": {
+                "name": battle.startup1.name,
+                "points": battle.startup1.points,
+                "events": [e for e in battle.applied_events if e in self.events]
+            },
+            "startup2": {
+                "name": battle.startup2.name,
+                "points": battle.startup2.points,
+                "events": [e for e in battle.applied_events if e in self.events]
+            },
+            "round": battle.round,
+            "availabe_events": self.get_available_events(battle_index)
+        }

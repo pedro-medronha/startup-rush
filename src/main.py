@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from models import battle
 from models.rush import Rush
 
 class Main:
@@ -144,8 +145,16 @@ class Main:
         try:
             self.tournament.start_tournament()
             self.update_battle_list()
-            self.notebook.select(1)  # Switch to tournament tab
-            messagebox.showinfo("Tournament started successfully!")
+            self.notebook.select(1)  # troca pra aba do torneio
+            
+            # verificação de consistência
+            for battle in self.tournament.pending_battles:
+                if not hasattr(battle, "startup1") or not hasattr(battle, "startup2"):
+                    raise AttributeError("Battle doesn't have startups defined correctly.")
+            
+            #atualiza os eventos da batalha
+            if self.tournament.pending_battles:
+                self.update_events(0, 0)
             
             self.apply_event_button.config(state=tk.NORMAL)
             self.resolve_button.config(state=tk.NORMAL)    
@@ -158,8 +167,8 @@ class Main:
         for i, battle in enumerate(self.tournament.pending_battles):
             self.battle_tree.insert(
                 "", tk.END,
-                values=(battle.startup1.name, battle.startup2.name, battle.round),
-                tags=(i,)  # guarda o index da batalha
+                values=(battle.startup1.name, battle.startup2.name, battle.round_number),
+                tags=(i, )  # guarda o index da batalha
             )
         self.round_label.config(text=f"Current Round: {self.tournament.current_round}")
         
@@ -172,20 +181,19 @@ class Main:
                 raise ValueError("You must select a battle!")
             
             battle_index = int(self.battle_tree.item(selected_item, "tags")[0])
-            event = self.event_combobox.get()
             
-            # dialogo para escolher a startup que receberá o evento
-            startup_choice = self.ask_startup(battle_index)
-            if startup_choice is None:  # caso nao selecione
-                return
-                
+            # retorna startup e o evento selecionado
+            startup_index, event = self.ask_startup(battle_index)
+            
+            if None in (startup_index, event):
+                return # pra quando o usuario cancelar a janela de eventos
+            
             # implementa a função da classe Rush
-            self.tournament.apply_event_to_startup(battle_index, event, startup_choice)
+            self.tournament.apply_event_to_startup(battle_index, event, startup_index)
             
-            # atualiza a lista de batalhas e eventos disponíveis
+            # atualiza a lista de batalhas e exibição
             self.update_battle_list()
-            self.update_events(battle_index)
-            messagebox.showinfo("Event '{event}' applied!")
+            messagebox.showinfo(f"Event '{event}' applied to {self.tournament.pending_battles[battle_index].startup1.name if startup_index == 0 else self.tournament.pending_battles[battle_index].startup2.name}!")
             
         except ValueError as e:
             messagebox.showerror("Erro", str(e))
@@ -197,51 +205,131 @@ class Main:
         battle = self.tournament.pending_battles[battle_index]
         
         dialog = tk.Toplevel(self.root)
-        dialog.title("Select Startup")
-        dialog.geometry("300x150")
+        dialog.title("Apply Event")
+        dialog.geometry("400x300")
         
-        tk.Label(dialog, text="Which Startup would you like to apply the event?").pack(pady=10)
+        #variavel pra armazenar a startup selecionada
+        self.selected_startup = {
+            'startup_index': None,
+            'event': None
+        }
         
-        choice = None
+        #selecionar startup
+        startup_frame = ttk.LabelFrame(dialog, text="Select Startup")
+        startup_frame.pack(pady=10, padx=10, fill=tk.X)
         
-        def set_choice(index):
-            nonlocal choice
-            choice = index
-            dialog.destroy()
-        
-        tk.Button(dialog, text=battle.startup1.name, command=lambda: set_choice(0)).pack(side=tk.LEFT, padx=10)
-        tk.Button(dialog, text=battle.startup2.name, command=lambda: set_choice(1)).pack(side=tk.RIGHT, padx=10)
-        
-        dialog.transient(self.root)  # dialogo modal 
-        dialog.grab_set()
-        self.root.wait_window(dialog)
-        
-        return choice   
+        startup_var = tk.IntVar(value=0)  
+              
+        # radiobuttons para selecionar as startups
+        ttk.Radiobutton(
+            startup_frame,
+            text=f"{battle.startup1.name} (Points: {battle.startup1.points})",
+            variable=startup_var,
+            value=0,
+        ).pack(anchor=tk.W)
 
-    def uptade_events(self, battle_index):
-        # atualiza os eventos disponíveis
-        available_events = self.tournament.get_available_events(battle_index)
-        self.event_combobox["values"] = available_events
-        if available_events:
-            self.event_combobox.set(available_events[0])
+        ttk.Radiobutton(
+            startup_frame,
+            text=f"{battle.startup2.name} (Points: {battle.startup2.points})",
+            variable=startup_var,
+            value=1,
+        ).pack(anchor=tk.W) 
+        
+        # janela para selecionar eventos
+        event_frame = ttk.LabelFrame(dialog, text="Select Event")
+        event_frame.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
+        
+        #mostra os eventos disponíveis
+        event_listbox = tk.Listbox(event_frame)
+        event_listbox.pack(fill=tk.BOTH, expand=True)   
+        
+        #preenche a lista de eventos disponíveis
+        for event in self.tournament.events:
+           event_listbox.insert(tk.END, f"{event} ({'+' if self.tournament.events[event] > 0 else ''}{self.tournament.events[event]} pts)")
+
+        #botao de confirmação
+        def confirmation():
+            selected_event_index = event_listbox.curselection()
+            if not selected_event_index:
+                messagebox.showwarning("Select an event!")
+                return
             
+            selected_event =  list(self.tournament.events.keys())[selected_event_index[0]]  
+            
+            selected_startup = startup_var.get()
+            applied_events = battle.applied_events_startup1 if selected_startup == 0 else battle.applied_events_startup2
+            
+            if selected_event in applied_events:
+                messagebox.showerror(f"Event already applied to {battle.startup1.name if selected_startup == 0 else battle.startup2.name}!")
+                return
+            
+            self.selected_startup = {
+                'startup_index': selected_startup,
+                'event': selected_event
+            }
+            dialog.destroy()
+            
+        ttk.Button(
+            dialog,
+            text="Apply Event",
+            command=confirmation
+        ).pack(pady=10)
+            
+        dialog.transient(self.root)  # faz o dialog ficar em cima da janela principal
+        dialog.grab_set()
+        self.root.wait_window(dialog)  # espera o dialog ser fechado
+            
+        return self.selected_startup['startup_index'], self.selected_startup['event']
+                    
+    def update_events(self, battle_index: int, startup_index: int):
+        # atualiza os eventos disponíveis
+        try:
+            availabe_events = self.tournament.get_available_events(battle_index, startup_index)
+            self.event_combobox["values"] = availabe_events
+            
+            if availabe_events:
+                self.event_combobox.set(availabe_events[0]) 
+                self.apply_event_button.config(state=tk.NORMAL)       
+            else:
+                self.event_combobox.set('')
+                self.apply_event_button.config(state=tk.DISABLED)
+        except ValueError as e:
+            messagebox.showerror("Error", f"Failed to update events: {str(e)}")
+
     def resolve_battle(self):
-        #resolve a batalha utilizando o Shark Fight
+        #finaliza a batalha utilizando o Shark Fight
         try:
             selected_item = self.battle_tree.focus()
             if not selected_item:
-                raise ValueError("You must select a battle!")
+                messagebox.showwarning("You must select a battle!")
+                return
             
             battle_index = int(self.battle_tree.item(selected_item, "tags")[0])
+            
+            #verificação de segurança adicional
+            if battle_index >= len(self.tournament.pending_battles):
+                raise IndexError("Index out of range!")
+            
+            #finaliza a batalha
             winner = self.tournament.shark_fight(battle_index)
             
-            # atualiza a lista de batalhas e o status
+            #atualiza interface
             self.update_battle_list()
-            messagebox.showinfo("Battle resolved!", f"The winner is {winner.name} with {winner.points} points!")
+            
+            #mostra resultado da batalha
+            message = f"Battle resolved! {winner.name} won with {winner.points} points!"
+            battle = self.tournament.ended_battles[-1]  # a última batalha finalizada
+            if battle.startup1.points == battle.startup2.points:
+                message += "\nThe battle was resolved with a Shark Fight!"
+                
+            messagebox.showinfo("Battle result", message)
             
             # verifica se o torneio acabou  
             if self.tournament.champion:
-                messagebox.showinfo("The champion is {self.tournament.champion.name}!")
+                messagebox.showinfo(f"The champion is {self.tournament.champion.name}!")
+                
+                self.resolve_button.config(state=tk.DISABLED)
+                self.apply_event_button.config(state=tk.DISABLED)
             
         except ValueError as e:
             messagebox.showerror("Error", str(e))
