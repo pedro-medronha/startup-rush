@@ -9,8 +9,10 @@ class Battle:
         self.round_number = round_number
         self.applied_events_startup1: List[str] = [] #eventos aplicados à startup1
         self.applied_events_startup2: List[str] = [] #eventos aplicados à startup2
-        self.winner: Startup = None
+        self.winner = None
         self.ended = False
         
     def __str__(self):
-        return f"Battle between {self.startup1.name} and {self.startup2.name} in round {self.round_number}."
+        if self.startup2 is None:
+            return f"{self.startup1.name} (BYE)"
+        return f"{self.startup1.name} vs {self.startup2.name}"

@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+import traceback
 from models import battle
 from models.rush import Rush
+from models.startup import Startup
 
 class Main:
     def __init__(self, root):
@@ -22,6 +24,9 @@ class Main:
         
         # aba de torneio
         self.setup_tournament_tab()
+        
+        self.root.bind('<Return>', lambda e: self.register_startup())
+        self.root.bind('<Control-n>', lambda e: self.start_tournament())
         
     def setup_registration_tab(self):
         #funcionalidade de cadastro de startups
@@ -62,6 +67,21 @@ class Main:
             state=tk.DISABLED
         )
         self.start_button.pack(pady=10)
+        
+        #botao de reset
+        tk.Button(
+            tab,
+            text="Reset Tournament",
+            command=self.reset_tournament,
+            state=tk.NORMAL
+        ).pack(pady=5)
+        
+    def reset_tournament(self):
+        self.tournament = Rush() #inicia um novo torneio do zero
+        self.listbox.delete(0, tk.END)
+        self.status_label.config(text="Startups: 0/8")
+        self.start_button.config(state=tk.DISABLED)
+        self.notebook.select(0)  # volta pra aba de cadastro
     
     def register_startup(self):
         try:
@@ -101,11 +121,13 @@ class Main:
         # lista as batalhas
         self.battle_tree = ttk.Treeview(
             self.battle_frame,
-            columns=("startup1", "startup2", "round"),
+            columns=("startup1", "points1", "startup2", "points2", "round"),
             show="headings"
         )
         self.battle_tree.heading("startup1", text="Startup 1")
+        self.battle_tree.heading("points1", text="Points")
         self.battle_tree.heading("startup2", text="Startup 2")
+        self.battle_tree.heading("points2", text="Points")
         self.battle_tree.heading("round", text="Round")
         self.battle_tree.pack(fill=tk.BOTH, expand=True)
         
@@ -136,6 +158,18 @@ class Main:
         )
         self.resolve_button.pack(side=tk.RIGHT, padx=5)
         
+        #botato para visualizar o ranking
+        self.ranking_button = ttk.Button(
+            tab,
+            text="View Ranking",
+            command=self.show_ranking,
+            state=tk.DISABLED
+        )
+        self.ranking_button.pack(pady=10)
+        
+        #flag pra verificar se o torneio acabou
+        self.tournament_ended = False
+        
         # Área de status
         self.round_label = tk.Label(tab, text=f"Current Round: {self.tournament.current_round}")
         self.round_label.pack()
@@ -162,15 +196,43 @@ class Main:
             messagebox.showerror("Error!", str(e))
             
     def update_battle_list(self):
-        #atualiza a lista de batalhas
+        #atualiza a lista de batalhas na interface
         self.battle_tree.delete(*self.battle_tree.get_children())
+    
         for i, battle in enumerate(self.tournament.pending_battles):
-            self.battle_tree.insert(
-                "", tk.END,
-                values=(battle.startup1.name, battle.startup2.name, battle.round_number),
-                tags=(i, )  # guarda o index da batalha
-            )
-        self.round_label.config(text=f"Current Round: {self.tournament.current_round}")
+            if battle.startup2 is None: # pra casos de batalha com Bye
+                values = (
+                    battle.startup1.name,
+                    battle.startup1.points,
+                    "BYE",
+                    "-",
+                    f"Round {battle.round_number}"
+                )
+            else:  # pra caso de batalhas normais (startups pares)
+                values = (
+                    battle.startup1.name,
+                    battle.startup1.points,
+                    battle.startup2.name,
+                    battle.startup2.points,
+                    f"Round {battle.round_number}"
+                )      
+            self.battle_tree.insert("", tk.END, values=values, tags=(i,))
+            
+        # atualiza informações da rodada
+        round_info = {
+            "current": self.tournament.current_round,
+            "remaining": len(self.tournament.pending_battles),
+            "completed": len(self.tournament.ended_battles)
+        }
+        self.round_label.config(
+            text=f"Round: {round_info['current']} | "
+                f"Battles: {round_info['completed']}/{round_info['completed'] + round_info['remaining']}"
+        )
+        
+        # atualiza estado dos botoes
+        has_battles = len(self.tournament.pending_battles) > 0
+        self.resolve_button.config(state=tk.NORMAL if has_battles else tk.DISABLED)
+        self.apply_event_button.config(state=tk.NORMAL if has_battles else tk.DISABLED)
         
     def apply_event(self):
     # aplica o evento selecionado à startup
@@ -181,6 +243,11 @@ class Main:
                 raise ValueError("You must select a battle!")
             
             battle_index = int(self.battle_tree.item(selected_item, "tags")[0])
+            battle = self.tournament.pending_battles[battle_index]
+            
+            if battle.startup2 is None:
+                messagebox.showinfo("Events not available in battles with BYE")
+                return
             
             # retorna startup e o evento selecionado
             startup_index, event = self.ask_startup(battle_index)
@@ -203,6 +270,10 @@ class Main:
     def ask_startup(self, battle_index):
         # criação de um diálogo para escolher a startup
         battle = self.tournament.pending_battles[battle_index]
+        
+        if battle.startup2 is None:
+            messagebox.showinfo("Events not available in battles with BYE")
+            return None, None
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Apply Event")
@@ -245,7 +316,9 @@ class Main:
         
         #preenche a lista de eventos disponíveis
         for event in self.tournament.events:
-           event_listbox.insert(tk.END, f"{event} ({'+' if self.tournament.events[event] > 0 else ''}{self.tournament.events[event]} pts)")
+            points = self.tournament.events[event]
+            event_display = f"{event} ({'+' if points > 0 else ''}{points} pts)"
+            event_listbox.insert(tk.END, event_display)
 
         #botao de confirmação
         def confirmation():
@@ -304,38 +377,155 @@ class Main:
                 messagebox.showwarning("You must select a battle!")
                 return
             
-            battle_index = int(self.battle_tree.item(selected_item, "tags")[0])
+            battle_index = self.battle_tree.index(selected_item)
+            result = self.tournament.shark_fight(battle_index)
             
-            #verificação de segurança adicional
-            if battle_index >= len(self.tournament.pending_battles):
-                raise IndexError("Index out of range!")
-            
-            #finaliza a batalha
-            winner = self.tournament.shark_fight(battle_index)
-            
-            #atualiza interface
+            if result.get("bye"):
+                msg = (f"{result['winner'].name} has advanced automatically")
+                messagebox.showinfo("Bye granted.", msg)
+            else:
+                msg = f"{result['winner'].name} won the battle! with {result['winner'].points} points!"
+                if result["shark_fight"]:
+                    msg += "\n(The battle was resolved with a shark fight!)"
+                messagebox.showinfo("Battle Result:", msg)
+
+            #atualiza a interface após a batalha
+            self.update_interface(result)  
+    
+        except Exception as e:
+            messagebox.showerror("Unexpected error", str(e))
+            print(f"Complete error: {traceback.format_exc()}")
+
+    def update_interface(self, result: dict):
+        #atualiza interface após uma batalha e avança a rodada
+        try:
             self.update_battle_list()
             
-            #mostra resultado da batalha
-            message = f"Battle resolved! {winner.name} won with {winner.points} points!"
-            battle = self.tournament.ended_battles[-1]  # a última batalha finalizada
-            if battle.startup1.points == battle.startup2.points:
-                message += "\nThe battle was resolved with a Shark Fight!"
+            if result.get("round_finished"):
+                self.event_combobox.set('')
+                self.battle_tree.selection_remove(self.battle_tree.selection())
                 
-            messagebox.showinfo("Battle result", message)
-            
-            # verifica se o torneio acabou  
-            if self.tournament.champion:
-                messagebox.showinfo(f"The champion is {self.tournament.champion.name}!")
+            if result.get("champion"):
+                self.show_champion(result["champion"])
+                self.tournament_ended = True
+                self.ranking_button.config(state=tk.NORMAL)
                 
+                #desabilita os controles
                 self.resolve_button.config(state=tk.DISABLED)
                 self.apply_event_button.config(state=tk.DISABLED)
-            
-        except ValueError as e:
-            messagebox.showerror("Error", str(e))
         except Exception as e:
             messagebox.showerror("Unexpected error", str(e))
 
+    def show_champion(self, champion: Startup):
+        champion_window = tk.Toplevel(self.root)
+        champion_window.title("STARTUP RUSH - Champion")
+        champion_window.geometry("400x200")
+        
+        frame = ttk.Frame(champion_window)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        tk.Label(
+            frame, 
+            text=f"🏆 {champion.name.upper()} 🏆",
+            font=("Arial", 14, "bold"),
+        ).pack(pady=10)
+        
+        tk.Label(
+            frame, 
+            text=f'"{champion.slogan}"',
+            font=("Arial", 12, "italic"),
+            wraplength=350
+        ).pack(pady=5)
+        
+        tk.Label(
+            frame,
+            text=f"Final points: {champion.points}",
+            font=("Arial", 12),
+        ).pack(pady=5)
+        
+        champion_window.grab_set()
+
+    def show_ranking(self):
+        #mostra o ranking das startups
+        try:
+            ranking = self.tournament.get_ranking()
+            if not ranking:
+                messagebox.showinfo("No ranking data availabe")
+                return
+
+            ranking_window = tk.Toplevel(self.root)
+            ranking_window.title("FINAL RANKING")
+            ranking_window.geometry("1000x600")
+        
+            frame = ttk.Frame(ranking_window)
+            frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            #treeview para mostrar o ranking
+            columns = ("position", "name", "points", "pitch", "bugs", "traction", "fake_news", "angry_investors", "byes")
+            tree = ttk.Treeview(
+                frame,
+                columns=columns,
+                show="headings",
+                height=20
+            )
+            
+            #cabeçalho da tabela
+            tree.heading("position", text="#")
+            tree.heading("name", text="Startup Name")
+            tree.heading("points", text="Points")
+            tree.heading("pitch", text="Pitches")
+            tree.heading("bugs", text="Bugs")
+            tree.heading("traction", text="Tractions")
+            tree.heading("fake_news", text="Fake News")
+            tree.heading("angry_investors", text="Angry Investors")
+            tree.heading("byes", text="Byes")
+            
+            #configura as colunas
+            tree.column("position", width=40, anchor="center")
+            tree.column("name", width=150)
+            tree.column("points", width=70, anchor="center")
+            tree.column("pitch", width=70, anchor="center")
+            tree.column("bugs", width=70, anchor="center")
+            tree.column("traction", width=70, anchor="center")
+            tree.column("angry_investors", width=100, anchor="center")
+            tree.column("fake_news", width=80, anchor="center")
+            tree.column("byes", width=50, anchor="center")
+                        
+            # add dados
+            for i, startup in enumerate(ranking, 1):
+                tree.insert("", tk.END, values=(
+                    i,
+                    startup["name"],    
+                    startup["points"],
+                    startup["pitch"],
+                    startup["bugs"],
+                    startup["traction"],
+                    startup["fake_news"],
+                    startup["angry_investors"],
+                    startup.get("byes", 0)
+                ))
+                        
+            #barra de rolagem
+            scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+            tree.configure(yscroll=scrollbar.set)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            tree.pack(fill=tk.BOTH, expand=True)    
+            
+            # botão de fechar
+            ttk.Button(
+                ranking_window,
+                text="Close",
+                command=ranking_window.destroy
+            ).pack(pady=10)
+        except Exception as e:
+            messagebox.showerror(f"Unable to display ranking: {str(e)}")
+         
+    def disbale_controls(self):
+        #desabilita os controles qunado o torneio termina
+        self.resolve_button.config(state=tk.DISABLED)
+        self.apply_event_button.config(state=tk.DISABLED)
+        self.event_combobox.set('')
+        
 if __name__ == "__main__":
     root = tk.Tk()
     app = Main(root)
