@@ -9,12 +9,12 @@ from models.startup import Startup
 class Rush:
     
     def __init__(self):
-        self.startups: List[Startup] = [] # List of startups
-        self.current_round = 1  # Current round of the tournament
-        self.pending_battles: List[Battle] = [] # List of pending battles
-        self.champion: Startup = None # Final champion
-        self.ended_battles: List[Battle] = [] # List of ended battles
-        self.champions = [] # List of champions
+        self.startups: List[Startup] = [] # lista de startups
+        self.current_round = 1  # round atual
+        self.pending_battles: List[Battle] = [] # lista de batalhas pendentes
+        self.champion: Startup = None # campeão final
+        self.ended_battles: List[Battle] = [] # lista de batalhas acabadas
+        self.champions = [] # lista de campeões
         self.events = {
             "pitch": 6,            
             "bugs": -4,            
