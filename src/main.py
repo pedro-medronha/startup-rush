@@ -277,7 +277,7 @@ class Main:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Apply Event")
-        dialog.geometry("400x300")
+        dialog.geometry("400x400")
         
         #variavel pra armazenar a startup selecionada
         self.selected_startup = {
