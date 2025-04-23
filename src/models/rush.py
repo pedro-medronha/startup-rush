@@ -25,7 +25,7 @@ class Rush:
     
     def add_startup(self, name, slogan, foundation_year):
         # verifica se ha startup com o mesmo nome
-        if any(s.name.lower() == name.strip().lower for s in self.startups):
+        if any(s.name.lower() == name.strip().lower() for s in self.startups):
             raise ValueError(f"There is already a startup named {name}!")
         
         # cria nova startup
